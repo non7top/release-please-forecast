@@ -1,4 +1,4 @@
-# predict-next-version-action
+# release-please-forecast
 
 A composite GitHub Action that predicts the exact next [release-please](https://github.com/googleapis/release-please)
 semver bump a pull request would trigger, *before* it's merged.
@@ -37,7 +37,7 @@ jobs:
           # this clone.
           fetch-depth: 0
 
-      - uses: non7top/predict-next-version-action@v1
+      - uses: non7top/release-please-forecast@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -48,7 +48,7 @@ To only compute the prediction (e.g. to name build artifacts) without touching t
       - name: Predict next version
         id: predict
         if: github.event_name == 'pull_request'
-        uses: non7top/predict-next-version-action@v1
+        uses: non7top/release-please-forecast@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           post-comment: 'false'
