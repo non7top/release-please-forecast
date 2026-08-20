@@ -7,8 +7,10 @@ description: >-
   which release-please reads as its own conventional commit — so a plain
   dry-run against just the PR branch's own commits can under-predict the
   real bump if the PR title has drifted from what those commits actually
-  say. Optionally also posts/updates the release-please-preview PR comment
-  and toggles the release label as a side effect.
+  say. release-please's own release PR is answered from its manifest bump
+  instead of being dry-run, since dry-running that one mispredicts badly.
+  Optionally also posts/updates the release-please-preview PR comment and
+  toggles the release label as a side effect.
 
 inputs:
   github-token:
@@ -36,7 +38,9 @@ outputs:
   version:
     description: >-
       Predicted next version (e.g. "1.2.0") if this PR were merged right
-      now, or empty if there are no releasable changes.
+      now. Empty when there are no releasable changes, and also when a
+      release would happen but the version couldn't be predicted with
+      confidence — check would-release to tell the two apart.
     value: ${{ steps.extract.outputs.version }}
   would-release:
     description: Whether merging this PR would trigger a release ("true"/"false").
@@ -44,12 +48,48 @@ outputs:
   bump-type:
     description: >-
       Predicted bump type ("major"/"minor"/"patch") if this PR were merged
-      right now, or empty if there are no releasable changes.
+      right now. Empty in exactly the cases version is empty.
     value: ${{ steps.extract.outputs.bump_type }}
 
 runs:
   using: composite
   steps:
+    # release-please's own release PR is the one PR this action must *not*
+    # dry-run, because merging it moves .release-please-manifest.json to a
+    # version that has no tag or GitHub release behind it — that release is
+    # exactly what the PR is proposing. release-please then can't find the
+    # commit of the "last release" it reads from the manifest, concludes the
+    # repo still needs bootstrapping, and stops breaking out of its commit
+    # walk early, so it replays the *entire* history from the first commit.
+    # That both re-lists every commit ever in the changelog and lets an
+    # ancient `Release-As:` footer (release-please's own bootstrap commit
+    # carries one) override the computed bump — e.g. a repo at 4.0.2 being
+    # told merging its 4.1.0 release PR would release 1.0.0.
+    #
+    # Nothing needs predicting for that PR anyway: the version merging it
+    # publishes is the one written in its own manifest bump, and the
+    # changelog is its own description. So detect it and read the answer
+    # off the PR instead of asking release-please to re-derive it.
+    #
+    # Two independent signals, since either can be customized away: the
+    # branch prefix release-please opens its release PRs with, and the
+    # label it puts on them (release-please's default `labels`).
+    - name: Detect release-please's own release PR
+      id: detect
+      shell: bash
+      env:
+        HEAD_REF: ${{ github.head_ref }}
+        PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+      run: |
+        is_release_pr=false
+        case "$HEAD_REF" in
+          release-please--*) is_release_pr=true ;;
+        esac
+        if printf '%s' "$PR_LABELS" | grep -qF '"autorelease: pending"'; then
+          is_release_pr=true
+        fi
+        echo "is_release_pr=$is_release_pr" >> "$GITHUB_OUTPUT"
+
     - name: Build the merge commit GitHub would create
       id: build_merge
       shell: bash
@@ -89,6 +129,7 @@ runs:
     # from this checkout (via git log), rather than the GitHub API, which
     # is what lets it see our not-yet-pushed simulated merge commit.
     - name: Run release-please dry run
+      if: steps.detect.outputs.is_release_pr != 'true'
       shell: bash
       env:
         TOKEN_INPUT: ${{ inputs.github-token }}
@@ -104,40 +145,93 @@ runs:
     - name: Extract predicted version
       id: extract
       shell: bash
+      env:
+        IS_RELEASE_PR: ${{ steps.detect.outputs.is_release_pr }}
+        HEAD_REF: ${{ github.head_ref }}
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
       run: |
-        # "Would open 0 pull requests" still matches /^Would open/, so the
-        # trimmed file is never actually empty — check the real count
-        # instead of relying on that file having any bytes in it.
-        would_release=false
-        if grep -qE '^Would open [1-9]' dryrun-output.txt; then
-          would_release=true
-        fi
-        echo "would_release=$would_release" >> "$GITHUB_OUTPUT"
+        # Echo the bump type between two versions, and nothing at all
+        # unless $2 is strictly newer than $1 (including when either isn't
+        # a parseable X.Y.Z). A real bump always moves the version forward,
+        # so "not strictly newer" means the number we got hold of can't be
+        # trusted — and reporting nothing beats reporting a wrong version.
+        # Any prerelease/build suffix is ignored; this action only
+        # classifies plain X.Y.Z releases.
+        classify_bump() {
+          from=${1%%[-+]*}
+          to=${2%%[-+]*}
+          echo "$from" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || return 0
+          echo "$to" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || return 0
+          IFS='.' read -r f_major f_minor f_patch <<< "$from"
+          IFS='.' read -r t_major t_minor t_patch <<< "$to"
+          if [ "$t_major" -gt "$f_major" ]; then
+            echo major
+          elif [ "$t_major" -lt "$f_major" ]; then
+            :
+          elif [ "$t_minor" -gt "$f_minor" ]; then
+            echo minor
+          elif [ "$t_minor" -lt "$f_minor" ]; then
+            :
+          elif [ "$t_patch" -gt "$f_patch" ]; then
+            echo patch
+          fi
+        }
 
-        version=""
-        if [ "$would_release" = true ]; then
-          version=$(grep -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' dryrun-output.txt | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-        fi
-        echo "version=$version" >> "$GITHUB_OUTPUT"
-
-        # Diff the last released version (read from the manifest on the
-        # base branch, before this PR's own changes) against the predicted
-        # version above to classify the bump. release-please's dry-run
-        # text doesn't state this directly, so we derive it from the two
-        # numbers rather than trying to re-parse commit types ourselves.
-        bump_type=""
-        if [ "$would_release" = true ]; then
+        # The last released version, read from the manifest on the base
+        # branch — i.e. before this PR's own changes. Missing rather than
+        # fatal: a repo configured some other way still gets a prediction
+        # from release-please itself, just no bump classification.
+        current_version=""
+        if [ -n "$(git ls-tree --name-only preview-base -- .release-please-manifest.json)" ]; then
           current_version=$(git show preview-base:.release-please-manifest.json | jq -r '."."')
-          IFS='.' read -r cur_major cur_minor _ <<< "$current_version"
-          IFS='.' read -r new_major new_minor _ <<< "$version"
-          if [ "$new_major" -gt "$cur_major" ]; then
-            bump_type=major
-          elif [ "$new_minor" -gt "$cur_minor" ]; then
-            bump_type=minor
-          else
-            bump_type=patch
+        fi
+
+        would_release=false
+        candidate=""
+        if [ "$IS_RELEASE_PR" = true ]; then
+          # Merging release-please's own release PR publishes exactly the
+          # version that PR writes into the manifest. Read it from the PR's
+          # own head rather than the simulated merge, so this still works
+          # when simulating the merge hit a conflict.
+          would_release=true
+          if [ -n "$(git ls-tree --name-only preview-head -- .release-please-manifest.json)" ]; then
+            candidate=$(git show preview-head:.release-please-manifest.json | jq -r '."."')
+          fi
+        else
+          # "Would open 0 pull requests" still matches /^Would open/, so
+          # the trimmed file is never actually empty — check the real count
+          # instead of relying on that file having any bytes in it.
+          if grep -qE '^Would open [1-9]' dryrun-output.txt; then
+            would_release=true
+            # `|| true`: a heading release-please writes in some other
+            # shape (a prerelease version, say) is a missing prediction,
+            # not a reason to fail the whole action — the guard below turns
+            # it into an empty version either way.
+            candidate=$(grep -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' dryrun-output.txt | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
           fi
         fi
+
+        # release-please's dry-run text doesn't state the bump type
+        # directly, so derive it from the two numbers rather than
+        # re-parsing commit types ourselves. Doubling as a sanity check:
+        # no classification means no trustworthy version to report.
+        bump_type=""
+        version=""
+        unreliable_reason=""
+        if [ "$would_release" = true ]; then
+          bump_type=$(classify_bump "$current_version" "$candidate")
+          if [ -n "$bump_type" ]; then
+            version="$candidate"
+          elif [ -z "$current_version" ]; then
+            unreliable_reason="the current version couldn't be read from \`.release-please-manifest.json\` at \`.\` on \`$BASE_REF\`, so there is nothing to compare a prediction against"
+          elif [ -z "$candidate" ]; then
+            unreliable_reason="release-please didn't report a plain \`X.Y.Z\` version for this release — this action only recognizes plain semver, so prereleases and other version shapes come back empty"
+          else
+            unreliable_reason="the version derived for this PR (\`$candidate\`) is not newer than the current \`$current_version\`. That usually means release-please couldn't find the release behind the version in \`.release-please-manifest.json\` — no \`v$current_version\` tag or GitHub release — and so replayed the whole commit history as if bootstrapping the repo. Check that \`$current_version\` was really tagged and released"
+          fi
+        fi
+        echo "would_release=$would_release" >> "$GITHUB_OUTPUT"
+        echo "version=$version" >> "$GITHUB_OUTPUT"
         echo "bump_type=$bump_type" >> "$GITHUB_OUTPUT"
 
         # The `body:` field is the exact markdown release-please would put
@@ -146,13 +240,33 @@ runs:
         # verbatim. Strip the "body: " prefix from its first line and keep
         # everything through the line before "updates: N" (a separate,
         # non-body debug field the CLI dumps after it), dropping the
-        # fork/title/branch/draft debug lines before it entirely — this
-        # comment's own header already says what would happen.
-        awk '
-          /^body: / { print substr($0, 7); capturing=1; next }
-          capturing && /^updates: [0-9]+$/ { exit }
-          capturing { print }
-        ' dryrun-output.txt > trimmed-output.txt
+        # fork/title/branch/draft debug lines before it entirely — the
+        # preview comment's own header already says what would happen.
+        if [ -f dryrun-output.txt ]; then
+          awk '
+            /^body: / { print substr($0, 7); capturing=1; next }
+            capturing && /^updates: [0-9]+$/ { exit }
+            capturing { print }
+          ' dryrun-output.txt > trimmed-output.txt
+        fi
+
+        # Build the body of the preview comment here, where all four cases
+        # are already distinguished, so posting it is just a `cat`.
+        {
+          if [ "$IS_RELEASE_PR" = true ] && [ -n "$version" ]; then
+            echo "Merging release-please's own release PR (\`$HEAD_REF\`) publishes **v$version** — a **$bump_type** bump from \`$current_version\` — and creates the matching tag and GitHub release."
+            echo
+            echo "The changelog it would publish is this PR's own description, so there's nothing to dry-run here."
+          elif [ "$IS_RELEASE_PR" = true ]; then
+            echo "⚠️ This is release-please's own release PR (\`$HEAD_REF\`), but the version it proposes couldn't be determined from \`.release-please-manifest.json\` at \`.\` — found \`${candidate:-nothing}\`, against \`${current_version:-nothing}\` on \`$BASE_REF\`. No version is being reported."
+          elif [ -n "$unreliable_reason" ]; then
+            echo "⚠️ A release would be triggered, but the version isn't being reported, because $unreliable_reason."
+          elif [ "$would_release" = true ]; then
+            cat trimmed-output.txt
+          else
+            echo "No releasable changes detected."
+          fi
+        } > comment-detail.md
 
     - name: Remove previous preview comment
       if: inputs.post-comment == 'true'
@@ -180,11 +294,7 @@ runs:
           echo
           echo "What merging this PR into \`${{ github.event.pull_request.base.ref }}\` would trigger:"
           echo
-          if [ "${{ steps.extract.outputs.would_release }}" = true ]; then
-            cat trimmed-output.txt
-          else
-            echo "No releasable changes detected."
-          fi
+          cat comment-detail.md
           echo
           echo "[Full run]($run_url)"
         } > comment-body.md
@@ -200,7 +310,8 @@ runs:
     # keep both color schemes in sync so the label means the same thing
     # everywhere it shows up: green (patch) is the routine, expected case;
     # yellow (minor) is new-but-compatible; red (major) is the one worth a
-    # second look before merging.
+    # second look before merging; grey means a release would happen but the
+    # bump couldn't be determined, and the preview comment says why.
     - name: Label PR if it would trigger a release
       if: inputs.post-comment == 'true'
       shell: bash
@@ -214,7 +325,7 @@ runs:
             major) color=D93F0B ;;
             minor) color=FBCA04 ;;
             patch) color=0E8A16 ;;
-            *) color=FF0000 ;;
+            *) color=6E7781 ;;
           esac
           gh label edit "$RELEASE_LABEL" --color "$color" --repo "${{ github.repository }}"
           gh pr edit "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --add-label "$RELEASE_LABEL"
