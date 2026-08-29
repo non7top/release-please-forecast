@@ -1,0 +1,53 @@
+name: release-please
+
+# This action is itself released by release-please, which leaves creating the
+# release tag to a PR merge rather than to someone remembering a git command.
+# The `simple` release type suits a composite action: it maintains CHANGELOG.md
+# and .release-please-manifest.json, and its `version.txt` updater is
+# createIfMissing:false, so no version file has to exist just to satisfy it —
+# nothing in action.yml carries a version to bump.
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      # release-please-config.json's extra-label applies RELEASE to the
+      # generated PR, but the action won't create the label itself, so it has
+      # to exist first. Red is only the first-creation default — the preview
+      # workflow recolors it by predicted bump on every run, this repo's own
+      # release PR included.
+      - name: Ensure the RELEASE label exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh label create RELEASE --color FF0000 --force --repo "${{ github.repository }}"
+
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # release-please creates the release tag with GITHUB_TOKEN, and refs pushed
+  # with that token are documented not to trigger workflow runs — so
+  # publish-tag's own `push: tags` trigger can't be relied on to see it. Call
+  # it directly instead of hoping. If the push trigger does also fire, the
+  # second run force-pushes the major tag to the same commit it already points
+  # at, which costs nothing.
+  move-major-tag:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-tag.yml
+    with:
+      release-tag: ${{ needs.release-please.outputs.tag_name }}

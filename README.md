@@ -202,16 +202,29 @@ date with the latest compatible release, per the
 [GitHub Actions versioning convention](https://docs.github.com/en/actions/creating-actions/about-custom-actions#using-release-management-for-actions).
 Pin to `@v1` to track non-breaking updates, or to an exact tag for full reproducibility.
 
-Releasing is therefore just pushing the release tag:
+Nothing about releasing is manual. This repository runs release-please on itself: land a conventional
+commit on `master`, release-please opens a release PR, and merging that PR cuts the tag and the GitHub
+release. [`.github/workflows/publish-tag.yml`](.github/workflows/publish-tag.yml) then force-moves the
+matching major tag (`v1`) onto the same commit.
 
-```sh
-git tag v1.3.0 <commit> && git push origin v1.3.0
-```
+A missed major-tag move is silent — `@v1` consumers simply stay on older code, with nothing anywhere
+to hint at it — which is exactly what happened before this was automated, and why it isn't left to
+hand. `publish-tag.yml` is reachable two ways for the same reason: its `push: tags` trigger for a
+hand-cut tag, and a direct `workflow_call` from the release workflow, because a tag pushed with
+`GITHUB_TOKEN` can't be relied on to fire that trigger.
 
-[`.github/workflows/publish-tag.yml`](.github/workflows/publish-tag.yml) picks that up and
-force-moves the matching major tag (`v1`) onto the same commit, so `@v1` consumers get the release
-without anyone having to remember the second step. A missed move is silent — `@v1` consumers simply
-stay on older code, with no error anywhere to hint at it — which is why it isn't left to hand.
+### It previews its own release PRs
+
+[`.github/workflows/release-please-preview.yml`](.github/workflows/release-please-preview.yml) runs
+this action on this repository's own pull requests, using `uses: ./` rather than a released tag — so a
+PR runs the action *as that PR would change it*, and one that breaks the prediction fails its own
+preview instead of shipping.
+
+That matters more than ordinary dogfooding. The bug behind
+[#2](https://github.com/non7top/release-please-forecast/issues/2) only ever surfaced on
+release-please's *own* release PR — a shape no unit test reproduces, and one this repository now
+generates for itself every release. A regression there shows up as a visibly wrong comment on the PR
+that caused it.
 
 ## License
 
