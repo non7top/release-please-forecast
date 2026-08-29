@@ -142,6 +142,17 @@ date with the latest compatible release, per the
 [GitHub Actions versioning convention](https://docs.github.com/en/actions/creating-actions/about-custom-actions#using-release-management-for-actions).
 Pin to `@v1` to track non-breaking updates, or to an exact tag for full reproducibility.
 
+Releasing is therefore just pushing the release tag:
+
+```sh
+git tag v1.3.0 <commit> && git push origin v1.3.0
+```
+
+[`.github/workflows/publish-tag.yml`](.github/workflows/publish-tag.yml) picks that up and
+force-moves the matching major tag (`v1`) onto the same commit, so `@v1` consumers get the release
+without anyone having to remember the second step. A missed move is silent — `@v1` consumers simply
+stay on older code, with no error anywhere to hint at it — which is why it isn't left to hand.
+
 ## License
 
 MIT
