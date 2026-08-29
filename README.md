@@ -100,6 +100,34 @@ This action only runs anything meaningful on `pull_request` events — it reads
   match reality; squash- or rebase-merge workflows don't produce the merge commit this action
   simulates, so the prediction may not reflect what actually lands.
 
+## Preflight checks
+
+Every requirement above is one you can get silently wrong: nothing fails, the prediction is just
+quietly computed from a false premise and then reported with exactly the confidence of a correct one.
+So the action checks its own preconditions first and annotates anything missing:
+
+| check | warns when |
+|---|---|
+| full history | the checkout is shallow (`git rev-parse --is-shallow-repository`), so release-please may not see back to the last release |
+| merge method | the repository has merge commits disabled, meaning no PR here can produce the merge commit this action simulates |
+| `edited` trigger | the running workflow file never mentions `edited`, so retitling a PR won't re-run it |
+| release-please config | `release-please-config.json` or `.release-please-manifest.json` is absent from the checkout |
+
+These **only ever warn** — preflight never fails the run — and they **stay quiet whenever they can't
+tell for certain**. A field the token can't read, a workflow file that isn't in the checkout, a
+reusable workflow defined in another repository: all pass silently rather than being guessed at. The
+asymmetry is deliberate. A warning that fires wrongly on a shared action teaches people to ignore all
+of its warnings, so missing a real misconfiguration is the cheaper mistake.
+
+The `edited` check reads only the workflow that is currently running, which needs no YAML parsing:
+this action does nothing except on `pull_request` events, so that file necessarily has the trigger
+already, and the only remaining question is whether `edited` appears in it. A mention anywhere in the
+file — a comment included — counts as configured. Scanning just that one file also avoids having to
+work out which workflows reference this action, which isn't reliably answerable once a repository has
+been renamed or the action is pinned by SHA.
+
+Set `preflight: 'false'` to switch all of it off.
+
 ## Inputs
 
 | Name            | Required | Default   | Description                                                                                                                                                     |
@@ -107,6 +135,7 @@ This action only runs anything meaningful on `pull_request` events — it reads
 | `github-token`  | yes      | —         | Token for release-please's own API calls and (if `post-comment` is `true`) for commenting/labeling the PR. Composite actions can't read the secrets context directly, so this must be passed in explicitly (e.g. `secrets.GITHUB_TOKEN`). |
 | `post-comment`  | no       | `'true'`  | Whether to also post/update a preview PR comment and set/remove the release label as a side effect. |
 | `release-label` | no       | `'RELEASE'` | Name of the label to create (if missing) and add/remove/recolor on the PR when `post-comment` is `true`, to flag whether merging it would trigger a release and (via color) what kind of bump it would be. |
+| `preflight`     | no       | `'true'`  | Whether to check the calling workflow and repository for the setup this action depends on and annotate anything missing. Warnings only — never fails the run, and stays quiet when it can't tell. See [Preflight checks](#preflight-checks). |
 
 ## Outputs
 
