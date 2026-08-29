@@ -33,6 +33,15 @@ inputs:
       trigger a release and (via color) what kind of bump it would be.
     required: false
     default: 'RELEASE'
+  preflight:
+    description: >-
+      Whether to check the calling workflow and repository for the setup
+      this action depends on — full history, merge-commit merging, the
+      `edited` activity type, release-please's own config — and annotate
+      anything missing. Warnings only: preflight never fails the run, and
+      stays quiet whenever it can't tell for certain.
+    required: false
+    default: 'true'
 
 outputs:
   version:
@@ -54,6 +63,78 @@ outputs:
 runs:
   using: composite
   steps:
+    # Every requirement this action has is one a consumer can get silently
+    # wrong: nothing fails, the prediction is just quietly computed from a
+    # false premise and reported with the same confidence as a correct one.
+    # These checks turn each of them into a visible annotation.
+    #
+    # They only ever warn, and they stay quiet whenever they can't tell.
+    # That asymmetry is deliberate: a warning that fires wrongly on a
+    # shared action teaches people to ignore all of its warnings, so a
+    # field this token can't read, a workflow file that isn't in the
+    # checkout, or anything else ambiguous is left alone rather than
+    # guessed at. Missing a real misconfiguration is the cheaper mistake.
+    - name: Preflight checks
+      if: inputs.preflight == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        WORKFLOW_REF: ${{ github.workflow_ref }}
+      run: |
+        warn() {
+          echo "::warning title=release-please-forecast::$1"
+        }
+
+        # release-please walks commits back to the last release tag. A
+        # shallow clone can cut that walk short, and the version computed
+        # from the truncated history looks entirely ordinary — the same
+        # class of silent wrongness as a bootstrap replay.
+        if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+          warn "This checkout is shallow, so release-please may not see back to the last release and the prediction can be wrong with nothing to indicate it. Set 'fetch-depth: 0' on the checkout step that runs before this action."
+        fi
+
+        # The premise of this action is the merge commit GitHub creates,
+        # with the PR title in its body. With merge commits disabled,
+        # nothing it reports describes what will actually land. The allow_*
+        # fields aren't visible to every token, so stderr is dropped and an
+        # empty answer is treated as "can't tell" rather than "disabled".
+        allow_merge=$(gh api "repos/$REPO" --jq '.allow_merge_commit // empty' 2>/dev/null || true)
+        if [ "$allow_merge" = false ]; then
+          warn "This repository has merge commits disabled, so its PRs land as squashes or rebases and never produce the merge commit this action simulates. Predictions here will not match what actually lands — see the README's Requirements."
+        fi
+
+        # Without the `edited` activity type a retitled PR never re-runs,
+        # and the stale comment, label and version output all carry on
+        # looking authoritative.
+        #
+        # Only the workflow that is running gets examined, which needs no
+        # YAML parsing at all: this action does nothing except on
+        # pull_request events, so that file necessarily has the trigger
+        # already, leaving one question — does it mention `edited`. Taking
+        # a mention anywhere in the file (a comment included) as configured
+        # is the error worth making, and scanning only this one file avoids
+        # having to guess which workflows reference this action, which is
+        # unanswerable once a repository is renamed or the action is pinned
+        # by SHA.
+        workflow_path="${WORKFLOW_REF%@*}"
+        workflow_path="${workflow_path#"$REPO/"}"
+        if [ -n "$workflow_path" ] && [ -f "$workflow_path" ]; then
+          if ! grep -q 'edited' "$workflow_path"; then
+            warn "'$workflow_path' doesn't list the 'edited' pull_request activity type, which GitHub doesn't enable by default. This action reads the PR title into its prediction, so retitling a PR changes the answer — and without 'edited' that retitle triggers no run, leaving the preview comment, the release label and the 'version' output all asserting the previous prediction. See the README."
+          fi
+        fi
+
+        # release-please's own configuration isn't this action's to create —
+        # it only previews an existing setup — but missing files turn the
+        # prediction into nonsense rather than into an error.
+        if [ ! -f release-please-config.json ]; then
+          warn "No 'release-please-config.json' in this checkout. This action previews an existing release-please setup rather than replacing one, and release-please can't compute a release without its config."
+        fi
+        if [ ! -f .release-please-manifest.json ]; then
+          warn "No '.release-please-manifest.json' in this checkout, so the current version can't be read and the bump can't be classified — 'version' and 'bump-type' will come back empty."
+        fi
+
     # release-please's own release PR is the one PR this action must *not*
     # dry-run, because merging it moves .release-please-manifest.json to a
     # version that has no tag or GitHub release behind it — that release is
