@@ -1,0 +1,41 @@
+name: release-please-preview
+
+# This action previewing its own release PRs is the strongest test it has.
+# The bug in #2 only ever appeared on release-please's own release PR, which
+# is a shape no unit test reproduces and which this repo now generates for
+# itself — so a regression there shows up as a visibly wrong preview comment
+# on the very PR that caused it.
+on:
+  pull_request:
+    # `edited` isn't a GitHub default. The prediction reads the PR title, so
+    # retitling a PR changes the answer, and without this that retitle
+    # triggers nothing — see the README section on activity types.
+    types: [opened, synchronize, reopened, edited]
+    branches: [master]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history and tags: the action walks back to the last release
+          # tag and builds its own merge commit on top of this clone. Its
+          # preflight checks warn if this is ever dropped.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # `./`, deliberately, not `@v1`: this runs the action *as the PR would
+      # change it*, so a PR that breaks the prediction fails its own preview
+      # rather than shipping and breaking consumers. Testing the already
+      # released version here would defeat the point of running it at all.
+      - uses: ./
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
