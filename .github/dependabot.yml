@@ -1,0 +1,26 @@
+version: 2
+updates:
+  # The only ecosystem this repository has. There's no package manifest — it's
+  # a composite action — so what Dependabot can usefully watch is the actions
+  # the workflows themselves pin.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # "chore" so a bump doesn't silently cut a release. A dependency update
+    # isn't reliably just a "fix" — it can carry breaking changes or new
+    # capability — and Dependabot has no way to self-report which, so a human
+    # decides whether a given bump warrants a release rather than every bump
+    # triggering one. Kept in sync with promptloom's copy.
+    #
+    # It also has to be a valid conventional-commit type: release-please reads
+    # these messages, and pre-commit.yml checks the pull request title.
+    commit-message:
+      prefix: "chore"
+    # One pull request for all action bumps rather than one each. Every such
+    # PR runs the full preview and lint workflows, so batching keeps that
+    # proportionate.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
