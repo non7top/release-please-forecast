@@ -44,6 +44,12 @@ consumes the output.
 ## Usage
 
 ```yaml
+on:
+  pull_request:
+    # `edited` matters here, and isn't in GitHub's defaults — see below.
+    types: [opened, synchronize, reopened, edited]
+    branches: [master]
+
 jobs:
   preview:
     runs-on: ubuntu-latest
@@ -62,6 +68,31 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
+
+### Which `pull_request` types to trigger on
+
+Add **`edited`** to the defaults. GitHub runs a `pull_request` workflow on
+[`opened`, `synchronize`, and `reopened` only](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
+unless you say otherwise, and that set is not enough for this action:
+
+- **`edited`** — fires when [a PR's title or body is edited](https://docs.github.com/en/webhooks/webhook-events-and-payloads?actionType=edited#pull_request).
+  The title is not cosmetic here. This action bakes it into the merge commit body exactly as GitHub
+  would, and release-please parses it as a conventional commit — so retitling a PR from
+  `fix: ...` to `feat!: ...` changes the predicted bump. Without `edited`, that retitle produces no
+  run: the preview comment, the release label and the `version` output all keep asserting the old
+  prediction, with nothing to indicate they're stale. This is precisely the drift the action exists
+  to catch, so leaving `edited` out undermines the point of running it.
+- **`synchronize`** — covers new commits, including a rebase or force-push, on its own.
+- **`opened`**, **`reopened`** — the obvious ones.
+
+The cost of `edited` is some redundant runs, since it also fires on body edits, which never affect the
+prediction. A run is a few seconds (and skips the dry run entirely on release-please's own release
+PR), so this is normally a fair trade for never showing a stale number.
+
+Retargeting a PR onto a different base branch is also reported to fire `edited`, which would matter
+for a workflow using a `branches:` filter. GitHub's published description of `edited` mentions only
+the title and body, so that isn't confirmed here — treat it as a bonus rather than something to rely
+on.
 
 To only compute the prediction (e.g. to name build artifacts) without touching the PR at all:
 
