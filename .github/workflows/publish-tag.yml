@@ -1,0 +1,52 @@
+name: publish-tag
+
+# Keep the moving major tag (v1) pointed at the newest release tag inside
+# that major, which is how consumers pinning `@v1` are meant to receive
+# non-breaking updates. Doing it by hand is the problem issue #4 points at:
+# every tag in this repo has been moved manually so far, and a missed move
+# silently leaves `@v1` consumers on older code — no error surfaces anywhere,
+# they just don't get the release. v1.0.0 has no `bump-type` output at all,
+# so a stale `v1` there means a downstream workflow reading that output gets
+# an empty string rather than a failure telling it why.
+on:
+  push:
+    tags:
+      # GitHub's ref filters aren't regular expressions, but they do support
+      # `+` as "one or more of the preceding character" plus character
+      # ranges, so this matches vX.Y.Z release tags and nothing else —
+      # prerelease tags like v1.2.0-rc1 don't match, and neither does the
+      # bare `v1` this workflow itself pushes. Refs pushed with GITHUB_TOKEN
+      # don't trigger workflow runs either, so there are two independent
+      # reasons this can't retrigger itself.
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+# Two releases tagged in quick succession would otherwise race to
+# force-push the same major tag, and the loser would win.
+concurrency: publish-tag
+
+jobs:
+  move-major-tag:
+    runs-on: ubuntu-latest
+    steps:
+      # Shallow is enough: the major tag is pointed straight at this
+      # release's commit, so no history needs to be walked. Default
+      # persist-credentials is what lets the push below authenticate.
+      - uses: actions/checkout@v7
+
+      - name: Point the major tag at this release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          major="${RELEASE_TAG%%.*}"
+
+          # Lightweight, matching every existing tag in this repo — which
+          # also means no committer identity has to be configured, as a
+          # lightweight tag carries no author of its own.
+          git tag -f "$major" "$GITHUB_SHA"
+          git push -f origin "refs/tags/$major"
+
+          echo "\`$major\` -> \`$GITHUB_SHA\` (from \`$RELEASE_TAG\`)" >> "$GITHUB_STEP_SUMMARY"
