@@ -1,0 +1,60 @@
+# Install both hook types, since the conventional-commit check below runs at
+# the commit-msg stage rather than pre-commit:
+#
+#     pre-commit install
+#
+# pre-commit.yml runs this same config in CI, so local and CI results can't
+# drift apart.
+default_install_hook_types: [pre-commit, commit-msg]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+      - id: forbid-submodules
+
+  # This repository is almost entirely workflow YAML wrapped around embedded
+  # bash, so actionlint earns its keep more than it would elsewhere: it
+  # type-checks `${{ }}` expressions, rejects unknown contexts, and runs
+  # shellcheck over every `run:` block. Wiring mistakes here otherwise
+  # surface only as a failed run after pushing.
+  #
+  # The -docker variant, not the default: that one is `language: golang` and
+  # builds actionlint from source, so it needs a Go toolchain new enough for
+  # its go.mod (1.25 at this rev — Debian's packaged Go is not) installed on
+  # whatever machine runs the hook. Docker is a dependency this repo's
+  # tooling already assumes, and a Go toolchain isn't.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint-docker
+
+  # Validates the workflows and action.yml against SchemaStore's schemas. A
+  # misspelled input name or a key at the wrong nesting level is silently
+  # ignored by the Actions runner rather than reported, which makes it
+  # exactly the sort of mistake worth catching mechanically.
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.38.0
+    hooks:
+      - id: check-github-workflows
+      - id: check-github-actions
+
+  # Conventional commits are load-bearing here rather than stylistic:
+  # release-please derives the next version from them, so a non-conforming
+  # message doesn't fail anything — it just quietly doesn't release, or
+  # releases the wrong bump. See the note in pre-commit.yml about why CI
+  # checks the pull request title too.
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]

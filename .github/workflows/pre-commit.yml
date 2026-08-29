@@ -1,0 +1,47 @@
+name: pre-commit
+
+# Runs the same .pre-commit-config.yaml the local hooks use, so a contributor
+# without the hooks installed gets the same answer, just later.
+on:
+  pull_request:
+    # `edited` because the pull request title is one of the things checked
+    # here — see the title step below. A retitle has to be re-checked.
+    types: [opened, synchronize, reopened, edited]
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      # Caches the hook environments keyed on the config, which matters
+      # because the actionlint hook is built from source with Go.
+      - uses: pre-commit/action@v3.0.1
+
+      # `pre-commit run --all-files` only runs pre-commit-stage hooks, so the
+      # conventional-commit check never fires above — it's a commit-msg hook.
+      # Feed it the pull request title explicitly, because with "Create a
+      # merge commit" that title *becomes* the merge commit's body, which is
+      # the conventional commit release-please actually parses. It is
+      # therefore the string that decides the next version, and the one worth
+      # failing a check over. Individual commit messages are covered by the
+      # commit-msg hook locally.
+      - name: Check the pull request title is a conventional commit
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf '%s\n' "$PR_TITLE" > "$RUNNER_TEMP/pr-title.txt"
+          pre-commit run conventional-pre-commit \
+            --hook-stage commit-msg \
+            --commit-msg-filename "$RUNNER_TEMP/pr-title.txt"
