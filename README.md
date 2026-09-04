@@ -135,7 +135,7 @@ This action only runs anything meaningful on `pull_request` events — it reads
 
 Every requirement above is one you can get silently wrong: nothing fails, the prediction is just
 quietly computed from a false premise and then reported with exactly the confidence of a correct one.
-So the action checks its own preconditions first and annotates anything missing:
+So the action checks its own preconditions first and reports anything missing:
 
 | check | warns when |
 |---|---|
@@ -143,6 +143,12 @@ So the action checks its own preconditions first and annotates anything missing:
 | merge method | the repository has merge commits disabled, meaning no PR here can produce the merge commit this action simulates |
 | `edited` trigger | the running workflow file never mentions `edited`, so retitling a PR won't re-run it |
 | release-please config | `release-please-config.json` or `.release-please-manifest.json` is absent from the checkout |
+
+Anything found is reported twice: as a job annotation, and as a warning block at the top of the
+preview comment (when `post-comment` is `true`), above the version and changelog it qualifies. The
+comment is the copy that matters — an annotation is only seen by someone who opens the run summary,
+whereas these warnings all amount to "the version below may be wrong", which needs to reach whoever
+is about to click merge.
 
 These **only ever warn** — preflight never fails the run — and they **stay quiet whenever they can't
 tell for certain**. A field the token can't read, a workflow file that isn't in the checkout, a
@@ -166,7 +172,7 @@ Set `preflight: 'false'` to switch all of it off.
 | `github-token`  | yes      | —         | Token for release-please's own API calls and (if `post-comment` is `true`) for commenting/labeling the PR. Composite actions can't read the secrets context directly, so this must be passed in explicitly (e.g. `secrets.GITHUB_TOKEN`). |
 | `post-comment`  | no       | `'true'`  | Whether to also post/update a preview PR comment and set/remove the release label as a side effect. |
 | `release-label` | no       | `'RELEASE'` | Name of the label to create (if missing) and add/remove/recolor on the PR when `post-comment` is `true`, to flag whether merging it would trigger a release and (via color) what kind of bump it would be. |
-| `preflight`     | no       | `'true'`  | Whether to check the calling workflow and repository for the setup this action depends on and annotate anything missing. Warnings only — never fails the run, and stays quiet when it can't tell. See [Preflight checks](#preflight-checks). |
+| `preflight`     | no       | `'true'`  | Whether to check the calling workflow and repository for the setup this action depends on and report anything missing, as job annotations and at the top of the preview comment. Warnings only — never fails the run, and stays quiet when it can't tell. See [Preflight checks](#preflight-checks). |
 
 ## Outputs
 
