@@ -323,9 +323,32 @@ runs:
         # non-body debug field the CLI dumps after it), dropping the
         # fork/title/branch/draft debug lines before it entirely — the
         # preview comment's own header already says what would happen.
+        #
+        # Headings pass through untouched, and that is what the comment's
+        # own `#` header buys: release-please writes the version as `##`
+        # and the changelog sections as `###`, so a single `#` above them
+        # nests the whole quoted release exactly one level down with
+        # nothing to rewrite. Anything deeper as the comment's header
+        # would mean demoting every heading in the body to keep the quoted
+        # release from outranking the line that frames it — and demoting
+        # Markdown is not free, since a `#` at the start of a line inside
+        # a fenced block is a shell comment someone wrote in a commit
+        # message rather than a heading.
         if [ -f dryrun-output.txt ]; then
           awk '
-            /^body: / { print substr($0, 7); capturing=1; next }
+            /^body: / {
+              line = substr($0, 7)
+              # release-please writes this body for the release PR it is
+              # about to open, so it opens in the past tense. Nothing has
+              # been created here — this PR is not merged yet, and may
+              # never be — so put the lead-in in the tense the rest of the
+              # comment is written in. A reworded lead-in upstream just
+              # does not match, and passes through as-is.
+              sub(/I have created a release/, "I will create a release", line)
+              print line
+              capturing=1
+              next
+            }
             capturing && /^updates: [0-9]+$/ { exit }
             capturing { print }
           ' dryrun-output.txt > trimmed-output.txt
@@ -371,7 +394,7 @@ runs:
 
         {
           echo "<!-- release-please-preview -->"
-          echo "### 🤖 release-please preview"
+          echo "# 🤖 release-please PREVIEW"
           echo
           echo "What merging this PR into \`${{ github.event.pull_request.base.ref }}\` would trigger:"
           echo
