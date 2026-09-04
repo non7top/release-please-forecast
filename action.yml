@@ -37,9 +37,11 @@ inputs:
     description: >-
       Whether to check the calling workflow and repository for the setup
       this action depends on — full history, merge-commit merging, the
-      `edited` activity type, release-please's own config — and annotate
-      anything missing. Warnings only: preflight never fails the run, and
-      stays quiet whenever it can't tell for certain.
+      `edited` activity type, release-please's own config — and report
+      anything missing, both as job annotations and at the top of the
+      preview comment when post-comment is true. Warnings only: preflight
+      never fails the run, and stays quiet whenever it can't tell for
+      certain.
     required: false
     default: 'true'
 
@@ -82,8 +84,23 @@ runs:
         REPO: ${{ github.repository }}
         WORKFLOW_REF: ${{ github.workflow_ref }}
       run: |
+        # Every warning goes two places: the job's annotations, and a file
+        # the comment step reads back. An annotation is only ever seen by
+        # someone who thinks to open the run summary, and each of these
+        # warnings says some variant of "the version below may be wrong" —
+        # which has to reach whoever is about to click merge, on the PR,
+        # next to the version itself.
+        #
+        # The file sits in RUNNER_TEMP rather than the workspace, unlike
+        # the action's other scratch files: this step runs before the
+        # `git checkout` that builds the simulated merge, and an untracked
+        # file in the workspace aborts that checkout if the base branch
+        # happens to track a file by the same name.
+        WARNINGS_FILE="$RUNNER_TEMP/preflight-warnings.md"
+        : > "$WARNINGS_FILE"
         warn() {
           echo "::warning title=release-please-forecast::$1"
+          echo "- $1" >> "$WARNINGS_FILE"
         }
 
         # release-please walks commits back to the last release tag. A
@@ -323,9 +340,32 @@ runs:
         # non-body debug field the CLI dumps after it), dropping the
         # fork/title/branch/draft debug lines before it entirely — the
         # preview comment's own header already says what would happen.
+        #
+        # Headings pass through untouched, and that is what the comment's
+        # own `#` header buys: release-please writes the version as `##`
+        # and the changelog sections as `###`, so a single `#` above them
+        # nests the whole quoted release exactly one level down with
+        # nothing to rewrite. Anything deeper as the comment's header
+        # would mean demoting every heading in the body to keep the quoted
+        # release from outranking the line that frames it — and demoting
+        # Markdown is not free, since a `#` at the start of a line inside
+        # a fenced block is a shell comment someone wrote in a commit
+        # message rather than a heading.
         if [ -f dryrun-output.txt ]; then
           awk '
-            /^body: / { print substr($0, 7); capturing=1; next }
+            /^body: / {
+              line = substr($0, 7)
+              # release-please writes this body for the release PR it is
+              # about to open, so it opens in the past tense. Nothing has
+              # been created here — this PR is not merged yet, and may
+              # never be — so put the lead-in in the tense the rest of the
+              # comment is written in. A reworded lead-in upstream just
+              # does not match, and passes through as-is.
+              sub(/I have created a release/, "I will create a release", line)
+              print line
+              capturing=1
+              next
+            }
             capturing && /^updates: [0-9]+$/ { exit }
             capturing { print }
           ' dryrun-output.txt > trimmed-output.txt
@@ -371,8 +411,19 @@ runs:
 
         {
           echo "<!-- release-please-preview -->"
-          echo "### 🤖 release-please preview"
+          echo "# 🤖 release-please PREVIEW"
           echo
+          # Above the prediction rather than below it: every preflight
+          # warning qualifies the version and changelog that follow, so
+          # they want reading first. A missing file means preflight was
+          # switched off; an empty one means it found nothing to say.
+          if [ -s "$RUNNER_TEMP/preflight-warnings.md" ]; then
+            echo "> [!WARNING]"
+            echo "> Preflight found problems with the setup this prediction depends on, so what follows may not be accurate:"
+            echo ">"
+            sed 's/^/> /' "$RUNNER_TEMP/preflight-warnings.md"
+            echo
+          fi
           echo "What merging this PR into \`${{ github.event.pull_request.base.ref }}\` would trigger:"
           echo
           cat comment-detail.md
