@@ -229,6 +229,14 @@ runs:
         if git -c user.name="predict-next-version" -c user.email="actions@github.com" \
             merge --no-ff preview-head -m "$MERGE_MESSAGE"; then
           echo "target=preview-merge" >> "$GITHUB_OUTPUT"
+          # This commit exists only inside this runner, so release-please
+          # will cite a SHA that no GitHub URL resolves to. Recorded here
+          # so the changelog entry it produces can be labelled as the
+          # merge commit rather than left looking like a second copy of
+          # the branch commit. Only set on this path: the conflict
+          # fallback below previews the branch head, where no merge commit
+          # was made at all.
+          echo "merge_sha=$(git rev-parse preview-merge)" >> "$GITHUB_OUTPUT"
         else
           # Base moved in a way that conflicts with the PR since it was
           # opened — fall back to previewing the branch's own commits
@@ -271,6 +279,7 @@ runs:
         IS_RELEASE_PR: ${{ steps.detect.outputs.is_release_pr }}
         HEAD_REF: ${{ github.head_ref }}
         BASE_REF: ${{ github.event.pull_request.base.ref }}
+        MERGE_SHA: ${{ steps.build_merge.outputs.merge_sha }}
       run: |
         # Echo the bump type between two versions, and nothing at all
         # unless $2 is strictly newer than $1 (including when either isn't
@@ -392,8 +401,27 @@ runs:
         # Markdown is not free, since a `#` at the start of a line inside
         # a fenced block is a shell comment someone wrote in a commit
         # message rather than a heading.
+        #
+        # One line in that changelog gets rewritten: the entry for the
+        # simulated merge commit. GitHub puts the PR title in a merge
+        # commit body, so release-please parses the merge commit as a
+        # conventional commit of its own and lists it alongside the
+        # branch commit — two entries for one change, reading identically
+        # whenever the PR title matches the commit subject. That
+        # duplication is real and will be in the published changelog too.
+        # What is not real is the SHA: the merge commit exists only in
+        # this runner, so its link resolves to nothing, and GitHub will
+        # make a different one on merge. So the citation is replaced with
+        # a name, which is also the thing that makes the second entry
+        # legible instead of looking like a bug.
         if [ -f dryrun-output.txt ]; then
-          awk '
+          awk -v merge_sha="$MERGE_SHA" '
+            function name_merge_commit(line) {
+              if (merge_sha != "" && index(line, merge_sha) > 0) {
+                sub(/\(\[[0-9a-f]+\]\([^)]*\)\)$/, "(the merge commit GitHub would create for this PR)", line)
+              }
+              return line
+            }
             /^body: / {
               line = substr($0, 7)
               # release-please writes this body for the release PR it is
@@ -403,13 +431,24 @@ runs:
               # comment is written in. A reworded lead-in upstream just
               # does not match, and passes through as-is.
               sub(/I have created a release/, "I will create a release", line)
-              print line
+              print name_merge_commit(line)
               capturing=1
               next
             }
             capturing && /^updates: [0-9]+$/ { exit }
-            capturing { print }
+            capturing { print name_merge_commit($0) }
           ' dryrun-output.txt > trimmed-output.txt
+
+          # Explain the pair, but only when there is a pair to explain —
+          # a PR title that is not a conventional commit produces no
+          # merge-commit entry at all, and a note about one would just be
+          # noise.
+          if grep -qF 'the merge commit GitHub would create for this PR' trimmed-output.txt; then
+            {
+              echo
+              echo "<sub>Two entries, one change: release-please reads both the commit on this branch and the merge commit GitHub will create, whose body is this PR title. Both really do land in the published changelog. Only the merge commit has no SHA to cite, because it does not exist yet.</sub>"
+            } >> trimmed-output.txt
+          fi
         fi
 
         # Build the body of the preview comment here, where all four cases
