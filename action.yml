@@ -134,9 +134,25 @@ runs:
         # having to guess which workflows reference this action, which is
         # unanswerable once a repository is renamed or the action is pinned
         # by SHA.
+        #
+        # `concurrency` is checked the same way and for a related reason.
+        # A force-push and a retitle landing together deliver two events —
+        # `synchronize` and `edited` — which start two runs against the
+        # same head SHA but different PR titles, and so different
+        # predictions. Both then delete and repost this PR's comment and
+        # set its label, with no ordering between them: the run that
+        # happens to finish last wins, whether or not it was the one
+        # holding the newer title. Observed in the wild, leaving a `fix:`
+        # prediction on a PR that had already been retitled to `chore:`.
+        # A concurrency group serialises or cancels them, and is the only
+        # one of these that fixes the label too, a label having no body to
+        # carry a freshness stamp in.
         workflow_path="${WORKFLOW_REF%@*}"
         workflow_path="${workflow_path#"$REPO/"}"
         if [ -n "$workflow_path" ] && [ -f "$workflow_path" ]; then
+          if ! grep -q 'concurrency' "$workflow_path"; then
+            warn "'$workflow_path' declares no 'concurrency' group, so two events arriving together (a force-push and a retitle, say) start two runs that both write this PR's comment and label, and whichever finishes last wins — even when it is the one holding the older PR title. Add 'concurrency: { group: <workflow>-<pr>, cancel-in-progress: true }'. See the README."
+          fi
           if ! grep -q 'edited' "$workflow_path"; then
             warn "'$workflow_path' doesn't list the 'edited' pull_request activity type, which GitHub doesn't enable by default. This action reads the PR title into its prediction, so retitling a PR changes the answer — and without 'edited' that retitle triggers no run, leaving the preview comment, the release label and the 'version' output all asserting the previous prediction. See the README."
           fi
@@ -200,6 +216,14 @@ runs:
       run: |
         git fetch origin "$BASE_REF:refs/heads/preview-base" "$HEAD_SHA:refs/heads/preview-head"
         git checkout -b preview-merge preview-base
+
+        # Recorded so the comment can name the base commit it predicted
+        # against. The base is the input that moves without anything
+        # re-running this action — another PR merging is not an event on
+        # this one — so a reader comparing this against the current tip of
+        # the base branch is the only way to tell a current preview from a
+        # stale one.
+        echo "base_sha=$(git rev-parse preview-base)" >> "$GITHUB_OUTPUT"
 
         MERGE_MESSAGE=$(printf 'Merge pull request #%s from %s\n\n%s' "$PR_NUMBER" "$HEAD_LABEL" "$PR_TITLE")
         if git -c user.name="predict-next-version" -c user.email="actions@github.com" \
@@ -437,8 +461,17 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        PR_TITLE: ${{ github.event.pull_request.title }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        BASE_SHA: ${{ steps.build_merge.outputs.base_sha }}
       run: |
         run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+        # The title is shown in a code span below, and a PR title is free
+        # text that can contain a backtick of its own. Strip them rather
+        # than let one close the span early and spill the rest of the
+        # footer out as prose.
+        title_display=${PR_TITLE//\`/}
 
         {
           echo "<!-- release-please-preview -->"
@@ -459,7 +492,20 @@ runs:
           echo
           cat comment-detail.md
           echo
-          echo "[Full run]($run_url)"
+
+          # Name the three inputs the prediction was computed from, so a
+          # reader can tell whether it still describes the PR in front of
+          # them. All three move: the head on a push, the title on a
+          # rename, and the base whenever anything else merges — and that
+          # last one re-runs nothing, since another PR merging is not an
+          # event on this one.
+          #
+          # The title is here because the SHAs alone do not settle it. Two
+          # runs racing after a simultaneous force-push and rename hold the
+          # *same* head SHA and differ only in the title they were handed,
+          # which is exactly how a stale prediction ends up looking
+          # authoritative.
+          echo "<sub>Predicted from \`${HEAD_SHA:0:7}\` merged into \`${{ github.event.pull_request.base.ref }}\` at \`${BASE_SHA:0:7}\`, with the PR title read as \`$title_display\` · [Full run]($run_url)</sub>"
         } > comment-body.md
         gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body-file comment-body.md
 

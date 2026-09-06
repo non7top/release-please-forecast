@@ -13,6 +13,18 @@ on:
     types: [opened, synchronize, reopened, edited]
     branches: [master]
 
+# A force-push and a retitle landing together deliver `synchronize` and
+# `edited` about a second apart, starting two runs against the same head
+# SHA but different PR titles — and so different predictions. Both then
+# delete and repost this PR's comment and set its label, with no ordering
+# between them, so the run that happens to finish last wins whether or not
+# it held the newer title. Cancelling the older run is the only fix that
+# covers the label too, a label having no body to carry a freshness stamp
+# in. Keyed per PR, so concurrent PRs still preview in parallel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   pull-requests: write
