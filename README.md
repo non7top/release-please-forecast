@@ -20,6 +20,12 @@ no side effects on the real repository unless you opt into them.
 Optionally (default on), it also posts/updates a PR comment previewing the release-please output,
 and adds/removes a label on the PR to flag whether merging it would trigger a release.
 
+That comment ends by naming the three inputs it was computed from — the head SHA, the base branch
+and the commit it was at, and the PR title as the run was handed it. All three move, and the base
+moves without anything re-running this action, since another PR merging is not an event on this one.
+The footer is what lets a reader tell a current prediction from one that describes a state the
+repository has since left.
+
 ## release-please's own release PR
 
 One PR must *not* be dry-run: the release PR release-please opens itself. Merging it lands a bump in
@@ -67,6 +73,11 @@ on:
     types: [opened, synchronize, reopened, edited]
     branches: [master]
 
+# Also not optional — see "Why the concurrency group matters" below.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   preview:
     runs-on: ubuntu-latest
@@ -111,6 +122,35 @@ for a workflow using a `branches:` filter. GitHub's published description of `ed
 the title and body, so that isn't confirmed here — treat it as a bonus rather than something to rely
 on.
 
+### Why the concurrency group matters
+
+Adding `edited` creates a second problem that the concurrency group solves, so the two belong
+together. Force-push a branch and rename its PR at the same time and GitHub delivers two events a
+second apart — `synchronize`, carrying the *old* title, then `edited`, carrying the new one. Two
+runs start, against the same head SHA but different titles, and therefore different predictions.
+Both then delete and repost this PR's comment and set its label, with nothing ordering them. Last to
+finish wins, and which run that is has nothing to do with which one held the newer title.
+
+This is not hypothetical. Seen in the wild on a PR renamed from `fix:` to `chore(ci):` while being
+force-pushed: the `edited` run finished first, correctly reported no release and removed the label;
+the `synchronize` run finished three seconds later, deleted that comment, and left a `0.4.1` patch
+prediction and a `RELEASE` label on a PR that would release nothing.
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+```
+
+Keyed per PR, so concurrent PRs still preview in parallel. `cancel-in-progress: true` also stops
+paying for a run whose answer is already superseded; a group without it serialises rather than
+cancels, which fixes the ordering too and is why preflight only checks that a `concurrency` group
+exists at all.
+
+Cancelling is the only fix here that covers the label as well as the comment. Everything else this
+action does to keep a stale answer off a PR works by putting information *in* the comment, and a
+label has no body to carry it.
+
 To only compute the prediction (e.g. to name build artifacts) without touching the PR at all:
 
 ```yaml
@@ -147,6 +187,9 @@ This action only runs anything meaningful on `pull_request` events — it reads
 - The repository's pull requests must be merged via "Create a merge commit" for the prediction to
   match reality; squash- or rebase-merge workflows don't produce the merge commit this action
   simulates, so the prediction may not reflect what actually lands.
+- The calling workflow should declare a `concurrency` group keyed per PR, or two runs racing can
+  leave the older one's prediction on the PR — see
+  [Why the concurrency group matters](#why-the-concurrency-group-matters).
 
 ## Preflight checks
 
@@ -159,6 +202,7 @@ So the action checks its own preconditions first and reports anything missing:
 | full history | the checkout is shallow (`git rev-parse --is-shallow-repository`), so release-please may not see back to the last release |
 | merge method | the repository has merge commits disabled, meaning no PR here can produce the merge commit this action simulates |
 | `edited` trigger | the running workflow file never mentions `edited`, so retitling a PR won't re-run it |
+| `concurrency` group | the running workflow file never mentions `concurrency`, so two runs racing can leave the older one's prediction on the PR |
 | release-please config | `release-please-config.json` or `.release-please-manifest.json` is absent from the checkout |
 
 Anything found is reported twice: as a job annotation, and as a warning block at the top of the
