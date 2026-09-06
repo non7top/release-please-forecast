@@ -279,9 +279,26 @@ runs:
         # branch — i.e. before this PR's own changes. Missing rather than
         # fatal: a repo configured some other way still gets a prediction
         # from release-please itself, just no bump classification.
+        #
+        # `// empty` matters: a manifest without a `.` entry makes jq print
+        # the string "null", which is not a version but is also not empty,
+        # so it would sail past every `-z` check below and be reported as
+        # the version bumped from.
         current_version=""
         if [ -n "$(git ls-tree --name-only preview-base -- .release-please-manifest.json)" ]; then
-          current_version=$(git show preview-base:.release-please-manifest.json | jq -r '."."')
+          current_version=$(git show preview-base:.release-please-manifest.json | jq -r '."." // empty')
+        fi
+
+        # The PR that adopts release-please is the one PR whose base branch
+        # has no manifest to read — because this PR is what adds it — and
+        # was, until this fallback, the one PR this action refused to
+        # predict, on a repo where a prediction is most wanted. After the
+        # merge release-please classifies the bump against the manifest as
+        # this PR leaves it, so that is the honest baseline to classify
+        # against here too. Only consulted when the base branch yielded
+        # nothing, so it can't override a real released version.
+        if [ -z "$current_version" ] && [ -n "$(git ls-tree --name-only preview-head -- .release-please-manifest.json)" ]; then
+          current_version=$(git show preview-head:.release-please-manifest.json | jq -r '."." // empty')
         fi
 
         would_release=false
@@ -293,7 +310,7 @@ runs:
           # when simulating the merge hit a conflict.
           would_release=true
           if [ -n "$(git ls-tree --name-only preview-head -- .release-please-manifest.json)" ]; then
-            candidate=$(git show preview-head:.release-please-manifest.json | jq -r '."."')
+            candidate=$(git show preview-head:.release-please-manifest.json | jq -r '."." // empty')
           fi
         else
           # "Would open 0 pull requests" still matches /^Would open/, so
@@ -321,7 +338,7 @@ runs:
           if [ -n "$bump_type" ]; then
             version="$candidate"
           elif [ -z "$current_version" ]; then
-            unreliable_reason="the current version couldn't be read from \`.release-please-manifest.json\` at \`.\` on \`$BASE_REF\`, so there is nothing to compare a prediction against"
+            unreliable_reason="no current version could be read from \`.release-please-manifest.json\` at \`.\` — neither on \`$BASE_REF\` nor in this PR's own copy of it — so there is nothing to compare a prediction against"
           elif [ -z "$candidate" ]; then
             unreliable_reason="release-please didn't report a plain \`X.Y.Z\` version for this release — this action only recognizes plain semver, so prereleases and other version shapes come back empty"
           else
@@ -382,6 +399,20 @@ runs:
             echo "⚠️ This is release-please's own release PR (\`$HEAD_REF\`), but the version it proposes couldn't be determined from \`.release-please-manifest.json\` at \`.\` — found \`${candidate:-nothing}\`, against \`${current_version:-nothing}\` on \`$BASE_REF\`. No version is being reported."
           elif [ -n "$unreliable_reason" ]; then
             echo "⚠️ A release would be triggered, but the version isn't being reported, because $unreliable_reason."
+            echo
+            # Withholding the changelog too made this comment say nothing
+            # at all about a PR that would in fact release something —
+            # "detects nothing" is how it reads, when the doubt is only
+            # over the number. release-please computed a body either way,
+            # so show it, folded, and let the warning above qualify it.
+            # Folded rather than inline because the untrustworthy cases
+            # include the whole-history replay, where this body is every
+            # commit the repository has ever had.
+            echo "<details><summary>What release-please's dry run produced for this merge</summary>"
+            echo
+            cat trimmed-output.txt
+            echo
+            echo "</details>"
           elif [ "$would_release" = true ]; then
             cat trimmed-output.txt
           else
