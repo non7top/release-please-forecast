@@ -39,7 +39,24 @@ As a backstop for any other way the same bootstrapping replay can be triggered (
 manifest whose tag or release went missing, say), a predicted version that isn't strictly newer than
 the current one is treated as untrustworthy: `version` and `bump-type` come back empty and the
 preview comment explains what looks wrong, rather than a bogus number being passed on to whatever
-consumes the output.
+consumes the output. The changelog release-please produced is still shown, folded, underneath that
+explanation — the doubt is over the number, and a comment that showed nothing at all read as if the
+action had failed to notice a release was coming.
+
+## The PR that adopts release-please
+
+The one PR whose base branch has no `.release-please-manifest.json` to read is the PR that adds it,
+and that is a repository where a prediction is worth the most: nobody has seen this pipeline run
+yet. So when the base branch has no manifest, the baseline is read from **this PR's own copy** of
+it instead. That matches what release-please itself will do after the merge, since it classifies the
+bump against the manifest as the merge leaves it.
+
+Worth knowing what that means for a first release, because it surprises people: the version in the
+manifest is one release-please treats as **already released**, not one it will publish — it holds
+even with no tag and no GitHub release behind it. Commit `{".": "0.1.0"}` and the first
+release-please release is 0.2.0, with 0.1.0 never published at all. Start the manifest at
+`{".": "0.0.0"}` for 0.1.0 to be the first published release, since a `feat:` is a minor bump by
+default and 0.0.0 plus a minor is 0.1.0.
 
 ## Usage
 
