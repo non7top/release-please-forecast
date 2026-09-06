@@ -17,6 +17,28 @@ This action closes that gap: it builds the *exact* merge commit GitHub would cre
 dry-runs release-please's CLI against that synthetic history, and reports what would happen — with
 no side effects on the real repository unless you opt into them.
 
+### Why one change shows up twice
+
+A consequence of that premise, and the first thing people take for a bug: the previewed changelog
+lists the same change twice — once for the commit on the branch, once for the merge commit carrying
+the PR title. Both are real. release-please reads both, and the published changelog has both
+entries too; it just isn't obvious when the PR title matches the commit subject word for word, since
+the two entries then read identically.
+
+What is *not* real is that merge commit's SHA. It exists only inside the runner, so its link
+resolves to nothing and GitHub will create a different commit on merge. The preview therefore names
+that entry instead of citing it:
+
+```markdown
+* **ci:** extract apt-repo publish/sign into reusable composite actions (the merge commit GitHub would create for this PR)
+* **ci:** extract apt-repo publish/sign into reusable composite actions ([380196e](…))
+```
+
+There is no good lever for removing the doubling: it follows from merging via merge commits at all,
+which is the premise this action exists to model. Squash-merging avoids it and takes the prediction
+with it. Giving the PR a title distinct from the commit subject at least makes the two entries say
+different things, which is how this repository's own changelog reads.
+
 Optionally (default on), it also posts/updates a PR comment previewing the release-please output,
 and adds/removes a label on the PR to flag whether merging it would trigger a release.
 
