@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0](https://github.com/non7top/release-please-forecast/compare/v1.4.1...v1.5.0) (2026-09-06)
+
+
+### Features
+
+* warn when the caller has no concurrency group, and name what was probed ([55add29](https://github.com/non7top/release-please-forecast/commit/55add29eff1a968ea385a3871df475d917997af4))
+* warn when the caller has no concurrency group, and name what was probed ([fbd6a5c](https://github.com/non7top/release-please-forecast/commit/fbd6a5cff64277fd4704a242aaed3fd402f7a935))
+
 ## [1.4.1](https://github.com/non7top/release-please-forecast/compare/v1.4.0...v1.4.1) (2026-09-06)
 
 
