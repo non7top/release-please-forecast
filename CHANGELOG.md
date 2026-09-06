@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.1](https://github.com/non7top/release-please-forecast/compare/v1.4.0...v1.4.1) (2026-09-06)
+
+
+### Bug Fixes
+
+* predict the release on the PR that adopts release-please ([da002ea](https://github.com/non7top/release-please-forecast/commit/da002ead9099b3691608c3dcc8f9888f9a3100ca))
+* predict the release on the PR that adopts release-please ([4fea643](https://github.com/non7top/release-please-forecast/commit/4fea6431d42052c94619893f3730888b64d6023f))
+
 ## [1.4.0](https://github.com/non7top/release-please-forecast/compare/v1.3.0...v1.4.0) (2026-09-04)
 
 
