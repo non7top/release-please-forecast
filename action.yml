@@ -390,17 +390,8 @@ runs:
         # non-body debug field the CLI dumps after it), dropping the
         # fork/title/branch/draft debug lines before it entirely — the
         # preview comment's own header already says what would happen.
-        #
-        # Headings pass through untouched, and that is what the comment's
-        # own `#` header buys: release-please writes the version as `##`
-        # and the changelog sections as `###`, so a single `#` above them
-        # nests the whole quoted release exactly one level down with
-        # nothing to rewrite. Anything deeper as the comment's header
-        # would mean demoting every heading in the body to keep the quoted
-        # release from outranking the line that frames it — and demoting
-        # Markdown is not free, since a `#` at the start of a line inside
-        # a fenced block is a shell comment someone wrote in a commit
-        # message rather than a heading.
+        # Headings pass through untouched: the comment's own `#` header
+        # already nests them a level down without rewriting anything.
         #
         # One line in that changelog gets rewritten: the entry for the
         # simulated merge commit. GitHub puts the PR title in a merge
