@@ -44,6 +44,20 @@ inputs:
       certain.
     required: false
     default: 'true'
+  package-name:
+    description: >-
+      Key into `.release-please-manifest.json` this action reads the
+      current version from and classifies the predicted bump against.
+      Leave empty for the common layout, where the whole repository is one
+      package keyed by "."; this action falls back to the manifest's first
+      key when "." is absent, which only tracks the whole repo's version
+      correctly when every package in the manifest is kept at the same
+      version by a linked-versions group with merge: true. Set this
+      explicitly for any other multi-package layout (e.g. a cargo-workspace
+      repo whose packages release independently), naming the one package
+      this prediction should follow.
+    required: false
+    default: ''
 
 outputs:
   version:
@@ -83,6 +97,7 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         REPO: ${{ github.repository }}
         WORKFLOW_REF: ${{ github.workflow_ref }}
+        PACKAGE_NAME: ${{ inputs.package-name }}
       run: |
         # Every warning goes two places: the job's annotations, and a file
         # the comment step reads back. An annotation is only ever seen by
@@ -166,6 +181,15 @@ runs:
         fi
         if [ ! -f .release-please-manifest.json ]; then
           warn "No '.release-please-manifest.json' in this checkout, so the current version can't be read and the bump can't be classified — 'version' and 'bump-type' will come back empty."
+        elif [ -z "$PACKAGE_NAME" ] && ! jq -e 'has(".")' .release-please-manifest.json > /dev/null 2>&1; then
+          # A manifest keyed by package path rather than "." (cargo-workspace
+          # + linked-versions, say) has no single repo-wide version to read.
+          # Guessing the manifest's first key is only right when every
+          # package in it moves together, and this check can't tell that —
+          # it only sees the manifest, not the plugin config that groups
+          # packages — so it warns unconditionally rather than trying to
+          # infer linkage from release-please-config.json's shape.
+          warn "'.release-please-manifest.json' has no '.' key, so this action is guessing the repo's version from the manifest's first key. That's only correct if every package in the manifest is kept at the same version by a linked-versions group with merge: true — set the 'package-name' input to the package this prediction should follow otherwise. See the README."
         fi
 
     # release-please's own release PR is the one PR this action must *not*
@@ -280,6 +304,7 @@ runs:
         HEAD_REF: ${{ github.head_ref }}
         BASE_REF: ${{ github.event.pull_request.base.ref }}
         MERGE_SHA: ${{ steps.build_merge.outputs.merge_sha }}
+        PACKAGE_NAME: ${{ inputs.package-name }}
       run: |
         # Echo the bump type between two versions, and nothing at all
         # unless $2 is strictly newer than $1 (including when either isn't
@@ -308,19 +333,44 @@ runs:
           fi
         }
 
+        # Which key in .release-please-manifest.json holds the version this
+        # action tracks. classify_bump below can only ever compare two
+        # scalar versions, so this only ever speaks to one package's
+        # history — the common layout keys the whole repo at ".". A repo
+        # split into per-directory packages (release-please's
+        # cargo-workspace/linked-versions plugins, say) has no "." entry at
+        # all, so PACKAGE_NAME lets a caller name the package that stands
+        # in for the repo's version; failing that, the manifest's first key
+        # is used, since a linked-versions group with merge: true keeps
+        # every member at the same version anyway. Picking the wrong key
+        # here silently classifies against the wrong package rather than
+        # erroring, which is the tradeoff of guessing at all over the
+        # previous hardcoded "." simply coming back empty.
+        #
+        # `// empty` matters: indexing a manifest that lacks the resolved
+        # key makes jq print the string "null", which is not a version but
+        # is also not empty, so it would sail past every `-z` check below
+        # and be reported as a real version.
+        manifest_version() {
+          ref="$1"
+          if [ -z "$(git ls-tree --name-only "$ref" -- .release-please-manifest.json)" ]; then
+            return
+          fi
+          manifest=$(git show "$ref:.release-please-manifest.json")
+          if [ -n "$PACKAGE_NAME" ]; then
+            printf '%s' "$manifest" | jq -r --arg k "$PACKAGE_NAME" '.[$k] // empty'
+          elif printf '%s' "$manifest" | jq -e 'has(".")' > /dev/null 2>&1; then
+            printf '%s' "$manifest" | jq -r '."." // empty'
+          else
+            printf '%s' "$manifest" | jq -r '[.[]][0] // empty'
+          fi
+        }
+
         # The last released version, read from the manifest on the base
         # branch — i.e. before this PR's own changes. Missing rather than
         # fatal: a repo configured some other way still gets a prediction
         # from release-please itself, just no bump classification.
-        #
-        # `// empty` matters: a manifest without a `.` entry makes jq print
-        # the string "null", which is not a version but is also not empty,
-        # so it would sail past every `-z` check below and be reported as
-        # the version bumped from.
-        current_version=""
-        if [ -n "$(git ls-tree --name-only preview-base -- .release-please-manifest.json)" ]; then
-          current_version=$(git show preview-base:.release-please-manifest.json | jq -r '."." // empty')
-        fi
+        current_version=$(manifest_version preview-base)
 
         # The PR that adopts release-please is the one PR whose base branch
         # has no manifest to read — because this PR is what adds it — and
@@ -330,8 +380,8 @@ runs:
         # this PR leaves it, so that is the honest baseline to classify
         # against here too. Only consulted when the base branch yielded
         # nothing, so it can't override a real released version.
-        if [ -z "$current_version" ] && [ -n "$(git ls-tree --name-only preview-head -- .release-please-manifest.json)" ]; then
-          current_version=$(git show preview-head:.release-please-manifest.json | jq -r '."." // empty')
+        if [ -z "$current_version" ]; then
+          current_version=$(manifest_version preview-head)
         fi
 
         would_release=false
@@ -342,9 +392,7 @@ runs:
           # own head rather than the simulated merge, so this still works
           # when simulating the merge hit a conflict.
           would_release=true
-          if [ -n "$(git ls-tree --name-only preview-head -- .release-please-manifest.json)" ]; then
-            candidate=$(git show preview-head:.release-please-manifest.json | jq -r '."." // empty')
-          fi
+          candidate=$(manifest_version preview-head)
         else
           # "Would open 0 pull requests" still matches /^Would open/, so
           # the trimmed file is never actually empty — check the real count
@@ -371,7 +419,7 @@ runs:
           if [ -n "$bump_type" ]; then
             version="$candidate"
           elif [ -z "$current_version" ]; then
-            unreliable_reason="no current version could be read from \`.release-please-manifest.json\` at \`.\` — neither on \`$BASE_REF\` nor in this PR's own copy of it — so there is nothing to compare a prediction against"
+            unreliable_reason="no current version could be read from \`.release-please-manifest.json\` — neither on \`$BASE_REF\` nor in this PR's own copy of it — so there is nothing to compare a prediction against"
           elif [ -z "$candidate" ]; then
             unreliable_reason="release-please didn't report a plain \`X.Y.Z\` version for this release — this action only recognizes plain semver, so prereleases and other version shapes come back empty"
           else
@@ -430,6 +478,35 @@ runs:
             capturing { print name_merge_commit($0) }
           ' dryrun-output.txt > trimmed-output.txt
 
+          # A linked-versions group with merge: true still appears to walk
+          # one release candidate per linked package internally, each
+          # wrapped in its own identical <details><summary>version</summary>
+          # block, before ever printing the single combined `updates: N`
+          # line the capture above stops at — so the body just captured can
+          # already contain that same block repeated once per linked
+          # package. Not verified against release-please's own source;
+          # dropping repeats defensively here reads right either way this
+          # turns out to be caused.
+          #
+          # Only *consecutive* identical blocks collapse — `prev` resets on
+          # any non-blank line that isn't part of a block, so a repeat that
+          # is genuinely separated by other content is left alone. This is
+          # aimed at the one observed shape, not textual dedup in general.
+          awk '
+            /^<details>/ { block = $0 "\n"; next }
+            block != "" {
+              block = block $0 "\n"
+              if ($0 == "</details>") {
+                if (block != prev) { printf "%s", block; prev = block }
+                block = ""
+              }
+              next
+            }
+            /^$/ { print; next }
+            { print; prev = "" }
+          ' trimmed-output.txt > trimmed-output.deduped.txt
+          mv trimmed-output.deduped.txt trimmed-output.txt
+
           # Explain the pair, but only when there is a pair to explain —
           # a PR title that is not a conventional commit produces no
           # merge-commit entry at all, and a note about one would just be
@@ -450,7 +527,7 @@ runs:
             echo
             echo "The changelog it would publish is this PR's own description, so there's nothing to dry-run here."
           elif [ "$IS_RELEASE_PR" = true ]; then
-            echo "⚠️ This is release-please's own release PR (\`$HEAD_REF\`), but the version it proposes couldn't be determined from \`.release-please-manifest.json\` at \`.\` — found \`${candidate:-nothing}\`, against \`${current_version:-nothing}\` on \`$BASE_REF\`. No version is being reported."
+            echo "⚠️ This is release-please's own release PR (\`$HEAD_REF\`), but the version it proposes couldn't be determined from \`.release-please-manifest.json\` — found \`${candidate:-nothing}\`, against \`${current_version:-nothing}\` on \`$BASE_REF\`. No version is being reported."
           elif [ -n "$unreliable_reason" ]; then
             echo "⚠️ A release would be triggered, but the version isn't being reported, because $unreliable_reason."
             echo

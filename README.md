@@ -39,6 +39,14 @@ which is the premise this action exists to model. Squash-merging avoids it and t
 with it. Giving the PR a title distinct from the commit subject at least makes the two entries say
 different things, which is how this repository's own changelog reads.
 
+A different, unwanted doubling can show up on a repository using a `linked-versions` plugin group
+with `merge: true` (see [Multi-package repositories](#multi-package-repositories)): the changelog
+release-please's own dry run produces there appears to repeat the identical
+`<details><summary>version</summary>…</details>` block once per linked package, before it ever gets
+to printing one combined update count. This action drops immediately-repeated identical blocks
+defensively, so that repetition doesn't reach the preview comment — regardless of whether it turns
+out to be release-please's own behavior or an artifact of the dry run specifically.
+
 Optionally (default on), it also posts/updates a PR comment previewing the release-please output,
 and adds/removes a label on the PR to flag whether merging it would trigger a release.
 
@@ -85,6 +93,37 @@ even with no tag and no GitHub release behind it. Commit `{".": "0.1.0"}` and th
 release-please release is 0.2.0, with 0.1.0 never published at all. Start the manifest at
 `{".": "0.0.0"}` for 0.1.0 to be the first published release, since a `feat:` is a minor bump by
 default and 0.0.0 plus a minor is 0.1.0.
+
+## Multi-package repositories
+
+`current_version`/`candidate`/`bump-type` can only ever compare two scalar versions, so this action
+only ever speaks to *one* package's history at a time. The common layout — a single package keyed by
+`"."` in `.release-please-manifest.json` — needs nothing from you, and is read the same way as
+before.
+
+A repository split into per-directory packages (release-please's `cargo-workspace`/`linked-versions`
+plugins, say) has no `"."` entry at all — the manifest is keyed by package path instead (e.g. `core`,
+`app`, `tools/pack-cities`). Without telling this action which key stands in for the repo's version,
+it falls back to the manifest's **first key**. That fallback is only correct when every package in
+the manifest is kept at the same version by a `linked-versions` group with `merge: true` — the case
+that shape of manifest usually comes from — since then any one key's version is every package's
+version. Preflight warns about this fallback whenever it's in effect (see
+[Preflight checks](#preflight-checks)), because it can't tell from the manifest alone whether your
+packages are actually linked that way.
+
+If your packages release independently (no `linked-versions` group, or one without `merge: true`),
+the first-key fallback is guessing at the wrong thing — set the `package-name` input to the one
+package whose version this prediction should follow:
+
+```yaml
+      - uses: non7top/release-please-forecast@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          package-name: core
+```
+
+This action still predicts one version for the whole PR, not one per package — that limitation isn't
+new here, it's just no longer silently pointed at nothing.
 
 ## Usage
 
@@ -256,6 +295,7 @@ Set `preflight: 'false'` to switch all of it off.
 | `post-comment`  | no       | `'true'`  | Whether to also post/update a preview PR comment and set/remove the release label as a side effect. |
 | `release-label` | no       | `'RELEASE'` | Name of the label to create (if missing) and add/remove/recolor on the PR when `post-comment` is `true`, to flag whether merging it would trigger a release and (via color) what kind of bump it would be. |
 | `preflight`     | no       | `'true'`  | Whether to check the calling workflow and repository for the setup this action depends on and report anything missing, as job annotations and at the top of the preview comment. Warnings only — never fails the run, and stays quiet when it can't tell. See [Preflight checks](#preflight-checks). |
+| `package-name`  | no       | `''`      | Key into `.release-please-manifest.json` this action reads the current version from and classifies the predicted bump against. Leave empty for the common single-package layout keyed by `"."`. See [Multi-package repositories](#multi-package-repositories). |
 
 ## Outputs
 
