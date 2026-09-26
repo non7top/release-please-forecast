@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.1](https://github.com/non7top/release-please-forecast/compare/v1.5.0...v1.5.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* name the simulated merge commit in the previewed changelog ([1709a26](https://github.com/non7top/release-please-forecast/commit/1709a263f147f9cfddfe0522aa99672d42ff14b4))
+* name the simulated merge commit in the previewed changelog ([5a41269](https://github.com/non7top/release-please-forecast/commit/5a412691d9eb5c1ce3dba5140bdb4d10e090905e))
+* stop hardcoding manifest's "." key; dedupe linked-versions changelog repeats ([cd4b1b0](https://github.com/non7top/release-please-forecast/commit/cd4b1b05fbbc3c1b2ff98625ccfb647dbdaff52d))
+* stop hardcoding the manifest's "." key, dedupe linked-versions changelog repeats ([f305bc0](https://github.com/non7top/release-please-forecast/commit/f305bc0f717d8a30b5fdd72dd9d26427becf32af))
+
 ## [1.5.0](https://github.com/non7top/release-please-forecast/compare/v1.4.1...v1.5.0) (2026-09-06)
 
 
