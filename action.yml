@@ -70,6 +70,12 @@ outputs:
   would-release:
     description: Whether merging this PR would trigger a release ("true"/"false").
     value: ${{ steps.extract.outputs.would_release }}
+  pr-contributes:
+    description: >-
+      Whether this PR itself adds releasable changes ("true"/"false"). "false"
+      with would-release "true" means a release is already pending on the base
+      branch and this PR would merely be part of it.
+    value: ${{ steps.extract.outputs.pr_contributes }}
   bump-type:
     description: >-
       Predicted bump type ("major"/"minor"/"patch") if this PR were merged
@@ -296,6 +302,23 @@ runs:
           --local-path="$(pwd)" \
           --dry-run > dryrun-output.txt 2>&1 || true
 
+    # The same dry run against the base branch alone, so the comment can
+    # tell a PR that causes a release from one that merely lands in a
+    # release already pending on the base.
+    - name: Run release-please dry run on the base branch
+      if: steps.detect.outputs.is_release_pr != 'true'
+      shell: bash
+      env:
+        TOKEN_INPUT: ${{ inputs.github-token }}
+      run: |
+        npx --yes release-please release-pr \
+          --token="$TOKEN_INPUT" \
+          --repo-url="${{ github.repository }}" \
+          --target-branch="preview-base" \
+          --local \
+          --local-path="$(pwd)" \
+          --dry-run > dryrun-base-output.txt 2>&1 || true
+
     - name: Extract predicted version
       id: extract
       shell: bash
@@ -426,6 +449,19 @@ runs:
             unreliable_reason="the version derived for this PR (\`$candidate\`) is not newer than the current \`$current_version\`. That usually means release-please couldn't find the release behind the version in \`.release-please-manifest.json\` — no \`v$current_version\` tag or GitHub release — and so replayed the whole commit history as if bootstrapping the repo. Check that \`$current_version\` was really tagged and released"
           fi
         fi
+
+        # A release already pending on the base produces the same dry-run
+        # changelog with or without this PR when the PR adds no entry
+        # (a chore, say). Then the PR rides along instead of causing it.
+        pr_contributes=$would_release
+        if [ "$would_release" = true ] && [ "$IS_RELEASE_PR" != true ] \
+            && grep -qE '^Would open [1-9]' dryrun-base-output.txt 2>/dev/null; then
+          changelog_body() { sed -n '/^body: /,/^updates: [0-9]*$/p' "$1"; }
+          if [ "$(changelog_body dryrun-output.txt)" = "$(changelog_body dryrun-base-output.txt)" ]; then
+            pr_contributes=false
+          fi
+        fi
+        echo "pr_contributes=$pr_contributes" >> "$GITHUB_OUTPUT"
         echo "would_release=$would_release" >> "$GITHUB_OUTPUT"
         echo "version=$version" >> "$GITHUB_OUTPUT"
         echo "bump_type=$bump_type" >> "$GITHUB_OUTPUT"
@@ -544,6 +580,10 @@ runs:
             cat trimmed-output.txt
             echo
             echo "</details>"
+          elif [ "$pr_contributes" = false ]; then
+            echo "**This PR does not cause a release.** It adds nothing releasable; it will simply be part of the release that is already pending on \`$BASE_REF\`, whose changelog would be:"
+            echo
+            cat trimmed-output.txt
           elif [ "$would_release" = true ]; then
             cat trimmed-output.txt
           else
@@ -636,7 +676,7 @@ runs:
         RELEASE_LABEL: ${{ inputs.release-label }}
       run: |
         gh label create "$RELEASE_LABEL" --color FF0000 --force --repo "${{ github.repository }}"
-        if [ "${{ steps.extract.outputs.would_release }}" = true ]; then
+        if [ "${{ steps.extract.outputs.would_release }}" = true ] && [ "${{ steps.extract.outputs.pr_contributes }}" != false ]; then
           case "${{ steps.extract.outputs.bump_type }}" in
             major) color=D93F0B ;;
             minor) color=FBCA04 ;;
