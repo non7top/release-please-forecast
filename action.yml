@@ -464,10 +464,12 @@ runs:
         pr_contributes=$would_release
         base_pending=false
         base_version=""
+        base_bump=""
         if [ "$would_release" = true ] && [ "$IS_RELEASE_PR" != true ] \
             && grep -qE '^Would open [1-9]' dryrun-base-output.txt 2>/dev/null; then
           base_pending=true
           base_version=$(grep -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' dryrun-base-output.txt | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
+          base_bump=$(classify_bump "$current_version" "$base_version")
           changelog_body() { sed -n '/^body: /,/^updates: [0-9]*$/p' "$1"; }
           if [ "$(changelog_body dryrun-output.txt)" = "$(changelog_body dryrun-base-output.txt)" ]; then
             pr_contributes=false
@@ -613,7 +615,13 @@ runs:
             echo
             echo "</details>"
           elif [ "$would_release" = true ] && [ "$base_pending" = true ]; then
-            echo "A release is already pending on \`$BASE_REF\`${base_version:+ (v$base_version)}. This PR adds to it${base_version:+, $([ "$base_version" = "$version" ] && echo "keeping it at" || echo "taking it to") **v$version**}. Entries marked _already pending_ are not from this PR."
+            if [ "$base_version" = "$version" ]; then
+              echo "A release is already pending on \`$BASE_REF\` (v$base_version, $base_bump). This PR adds to it without changing the version. Entries marked _already pending_ are not from this PR."
+            else
+              echo "⚠️ A release is already pending on \`$BASE_REF\` (v$base_version, $base_bump), and this PR **changes its bump to $bump_type (v$version)**. Entries marked _already pending_ are not from this PR."
+            fi
+            echo
+            echo "<sub>The bump is the highest of everything merged since \`v$current_version\`, so other open PRs can move it too.</sub>"
             echo
             cat trimmed-output.txt
           elif [ "$would_release" = true ]; then
