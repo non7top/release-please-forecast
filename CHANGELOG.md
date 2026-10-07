@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.6.0](https://github.com/non7top/release-please-forecast/compare/v1.5.1...v1.6.0) (2026-10-07)
+
+
+### Features
+
+* flag PRs that only join an already-pending release ([7d24d8c](https://github.com/non7top/release-please-forecast/commit/7d24d8c006625e4e7b2df2f29cb81a43d6671d7b))
+* flag PRs that only join an already-pending release ([f8e1cab](https://github.com/non7top/release-please-forecast/commit/f8e1cab801c5d370ae53d9543c4e6ee214af8f7e))
+* keep the pending release visible, in a fold, with its own label ([77bab33](https://github.com/non7top/release-please-forecast/commit/77bab338f8de4c049521014301e91165c8704e06))
+
 ## [1.5.1](https://github.com/non7top/release-please-forecast/compare/v1.5.0...v1.5.1) (2026-09-26)
 
 
