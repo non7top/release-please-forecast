@@ -462,8 +462,12 @@ runs:
         # changelog with or without this PR when the PR adds no entry
         # (a chore, say). Then the PR rides along instead of causing it.
         pr_contributes=$would_release
+        base_pending=false
+        base_version=""
         if [ "$would_release" = true ] && [ "$IS_RELEASE_PR" != true ] \
             && grep -qE '^Would open [1-9]' dryrun-base-output.txt 2>/dev/null; then
+          base_pending=true
+          base_version=$(grep -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' dryrun-base-output.txt | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || true)
           changelog_body() { sed -n '/^body: /,/^updates: [0-9]*$/p' "$1"; }
           if [ "$(changelog_body dryrun-output.txt)" = "$(changelog_body dryrun-base-output.txt)" ]; then
             pr_contributes=false
@@ -563,6 +567,18 @@ runs:
           fi
         fi
 
+        # When the PR joins a pending release and also adds to it, say which
+        # entries were already pending, so the list doesn't read as all
+        # caused by this PR.
+        if [ "$base_pending" = true ] && [ "$pr_contributes" = true ] && [ -f trimmed-output.txt ]; then
+          awk '
+            FNR == NR { if ($0 ~ /^\* /) pending[$0] = 1; next }
+            ($0 ~ /^\* /) && ($0 in pending) { print $0 " — _already pending_"; next }
+            { print }
+          ' <(sed -n '/^body: /,/^updates: [0-9]*$/p' dryrun-base-output.txt) trimmed-output.txt > trimmed-output.annotated.txt
+          mv trimmed-output.annotated.txt trimmed-output.txt
+        fi
+
         # Build the body of the preview comment here, where all four cases
         # are already distinguished, so posting it is just a `cat`.
         {
@@ -596,6 +612,10 @@ runs:
             cat trimmed-output.txt
             echo
             echo "</details>"
+          elif [ "$would_release" = true ] && [ "$base_pending" = true ]; then
+            echo "A release is already pending on \`$BASE_REF\`${base_version:+ (v$base_version)}. This PR adds to it${base_version:+, $([ "$base_version" = "$version" ] && echo "keeping it at" || echo "taking it to") **v$version**}. Entries marked _already pending_ are not from this PR."
+            echo
+            cat trimmed-output.txt
           elif [ "$would_release" = true ]; then
             cat trimmed-output.txt
           else
