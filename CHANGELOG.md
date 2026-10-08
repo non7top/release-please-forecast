@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.7.0](https://github.com/non7top/release-please-forecast/compare/v1.6.0...v1.7.0) (2026-10-08)
+
+
+### Features
+
+* mark already-pending entries when a PR also adds to the pending release ([e7d576f](https://github.com/non7top/release-please-forecast/commit/e7d576fa47a79e5a216f25df684325635c72ca2a))
+* mark already-pending entries when a PR also adds to the pending release ([9cf1b69](https://github.com/non7top/release-please-forecast/commit/9cf1b692ac57f0c48343db7e5bb09369116e4b11))
+* warn when a PR changes the bump of an already-pending release ([f161202](https://github.com/non7top/release-please-forecast/commit/f161202016d4c62db8bb70727179840a0d77485f))
+
+
+### Bug Fixes
+
+* read the version from release-please headings without a compare link ([8bd7547](https://github.com/non7top/release-please-forecast/commit/8bd7547188a92684590f76741b7d196c65f849c5))
+* read the version from release-please headings without a compare link ([288f408](https://github.com/non7top/release-please-forecast/commit/288f40857abff9240704cd6b361e287e9636f1b9))
+
 ## [1.6.0](https://github.com/non7top/release-please-forecast/compare/v1.5.1...v1.6.0) (2026-10-07)
 
 
