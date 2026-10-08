@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.1](https://github.com/non7top/release-please-forecast/compare/v1.7.0...v1.7.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* say no releasable changes, not already pending, when nothing would release ([e3d2721](https://github.com/non7top/release-please-forecast/commit/e3d27212bc5e2ae4af451e6d7fbb6dd4899ac764))
+* say no releasable changes, not already pending, when nothing would release ([faa1d61](https://github.com/non7top/release-please-forecast/commit/faa1d61396a11692e863b65ea475b6acdd4a77e7))
+
 ## [1.7.0](https://github.com/non7top/release-please-forecast/compare/v1.6.0...v1.7.0) (2026-10-08)
 
 
