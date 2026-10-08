@@ -606,7 +606,7 @@ runs:
             cat trimmed-output.txt
             echo
             echo "</details>"
-          elif [ "$pr_contributes" = false ]; then
+          elif [ "$would_release" = true ] && [ "$pr_contributes" = false ]; then
             echo "**A release is already pending on \`$BASE_REF\` (v$version, a $bump_type bump), and this PR is not what causes it.** This PR adds nothing releasable; it will just be part of that release."
             echo
             echo "<details><summary>Pending release changelog (not caused by this PR)</summary>"
